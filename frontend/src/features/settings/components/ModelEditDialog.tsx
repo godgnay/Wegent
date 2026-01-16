@@ -67,6 +67,7 @@ const PROTOCOL_BY_CATEGORY: Record<
     { value: 'openai-responses', label: 'OpenAI Responses', hint: 'Responses API' },
     { value: 'anthropic', label: 'Anthropic', hint: 'Claude Code' },
     { value: 'gemini', label: 'Gemini', hint: 'Google' },
+    { value: 'zhipu', label: 'ZhipuAI (GLM)', hint: 'GLM-4.7 API' },
   ],
   tts: [
     { value: 'openai', label: 'OpenAI TTS' },
@@ -112,6 +113,14 @@ const GEMINI_MODEL_OPTIONS = [
   { value: 'gemini-3-pro', label: 'gemini-3-pro (Recommended)' },
   { value: 'gemini-2.5-pro', label: 'gemini-2.5-pro' },
   { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+  { value: 'custom', label: 'Custom...' },
+]
+
+const ZHIPU_MODEL_OPTIONS = [
+  { value: 'glm-4.7', label: 'glm-4.7 (Recommended)' },
+  { value: 'glm-4.6', label: 'glm-4.6' },
+  { value: 'glm-4.5', label: 'glm-4.5' },
+  { value: 'glm-4', label: 'glm-4' },
   { value: 'custom', label: 'Custom...' },
 ]
 
@@ -280,7 +289,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         ? OPENAI_MODEL_OPTIONS
         : providerType === 'gemini'
           ? GEMINI_MODEL_OPTIONS
-          : ANTHROPIC_MODEL_OPTIONS
+          : providerType === 'zhipu'
+            ? ZHIPU_MODEL_OPTIONS
+            : ANTHROPIC_MODEL_OPTIONS
 
   // Merge fetched models with base options
   const modelOptions = React.useMemo(() => {
@@ -360,6 +371,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setBaseUrl('https://api.openai.com/v1')
       } else if (value === 'gemini') {
         setBaseUrl('https://generativelanguage.googleapis.com')
+      } else if (value === 'zhipu') {
+        setBaseUrl('https://open.bigmodel.cn/api/paas/v4')
       } else {
         setBaseUrl('https://api.anthropic.com')
       }
@@ -389,7 +402,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     setTesting(true)
     try {
       const result = await modelApis.testConnection({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini',
+        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'zhipu',
         model_id: finalModelId,
         api_key: apiKey,
         base_url: baseUrl || undefined,
@@ -457,7 +470,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
 
     try {
       const result = await modelApis.fetchAvailableModels({
-        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'custom',
+        provider_type: providerType as 'openai' | 'anthropic' | 'gemini' | 'zhipu' | 'custom',
         api_key: apiKey,
         base_url: baseUrl || undefined,
         custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
@@ -627,14 +640,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           : undefined
 
       // Map provider type to model field value
-      // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
+      // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini, zhipu -> openai (GLM uses OpenAI-compatible API)
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
       let modelFieldValue = providerType
       if (modelCategoryType === 'llm') {
         if (providerType === 'anthropic') {
           modelFieldValue = 'claude'
-        } else if (providerType === 'openai-responses') {
-          // openai-responses uses openai as the model type, protocol distinguishes the API format
+        } else if (providerType === 'openai-responses' || providerType === 'zhipu') {
+          // openai-responses and zhipu use openai as the model type, protocol distinguishes the API format
           modelFieldValue = 'openai'
         }
       }

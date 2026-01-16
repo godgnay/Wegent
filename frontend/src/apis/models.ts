@@ -124,7 +124,7 @@ export interface UnifiedModelListResponse {
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  provider_type: 'openai' | 'anthropic' | 'gemini'
+  provider_type: 'openai' | 'anthropic' | 'gemini' | 'zhipu'
   model_id: string
   api_key: string
   base_url?: string
@@ -139,7 +139,7 @@ export interface TestConnectionResponse {
 
 // Fetch Available Models Types
 export interface FetchAvailableModelsRequest {
-  provider_type: 'openai' | 'anthropic' | 'gemini' | 'custom'
+  provider_type: 'openai' | 'anthropic' | 'gemini' | 'zhipu' | 'custom'
   api_key: string
   base_url?: string
   custom_headers?: Record<string, string>

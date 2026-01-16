@@ -320,7 +320,7 @@ def test_model_connection(
 
     Request body:
     {
-      "provider_type": "openai" | "anthropic" | "gemini",
+      "provider_type": "openai" | "anthropic" | "gemini" | "zhipu",
       "model_id": "gpt-4",
       "api_key": "sk-...",
       "base_url": "https://api.openai.com/v1",  // optional
@@ -376,10 +376,10 @@ def _test_llm_connection(
 ) -> dict:
     """Test LLM API connection using LangChain.
 
-    Supports OpenAI, OpenAI Responses API, Anthropic, and Gemini providers.
+    Supports OpenAI, OpenAI Responses API, Anthropic, Gemini, and ZhipuAI (GLM) providers.
 
     Args:
-        provider_type: Provider type (openai, openai-responses, anthropic, gemini)
+        provider_type: Provider type (openai, openai-responses, anthropic, gemini, zhipu)
         model_id: The model ID to test
         api_key: API key for the provider
         base_url: Optional base URL for the API
@@ -408,7 +408,7 @@ def _test_llm_connection(
         }
 
     # LLM test using LangChain
-    if provider_type == "openai":
+    if provider_type in ["openai", "zhipu"]:
         from langchain_openai import ChatOpenAI
 
         chat_kwargs = {
@@ -502,7 +502,7 @@ def _test_embedding_connection(
     custom_headers: dict,
 ) -> dict:
     """Test embedding model connection using LangChain."""
-    if provider_type in ["openai", "openai-responses"]:
+    if provider_type in ["openai", "openai-responses", "zhipu"]:
         from langchain_openai import OpenAIEmbeddings
 
         embeddings = OpenAIEmbeddings(
@@ -586,8 +586,8 @@ def fetch_available_models(
         custom_headers = {}
 
     try:
-        # OpenAI and custom OpenAI-compatible APIs
-        if provider_type in ["openai", "custom"]:
+        # OpenAI and custom OpenAI-compatible APIs (including ZhipuAI/GLM)
+        if provider_type in ["openai", "custom", "zhipu"]:
             url = f"{base_url or 'https://api.openai.com/v1'}/models"
             headers = {
                 "Authorization": f"Bearer {api_key}",

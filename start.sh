@@ -98,10 +98,21 @@ show_uv_install_instructions() {
     exit 1
 }
 
-# Check if docker is installed
+# Check if docker is installed and running
 check_docker_installed() {
     if command -v docker &> /dev/null; then
-        return 0
+        # Also check if docker daemon is running
+        if docker ps >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    # Try Docker Desktop path on macOS
+    if [ -f "/Applications/Docker.app/Contents/Resources/bin/docker" ]; then
+        if /Applications/Docker.app/Contents/Resources/bin/docker ps >/dev/null 2>&1; then
+            # Add to PATH for this session
+            export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+            return 0
+        fi
     fi
     return 1
 }
@@ -142,65 +153,166 @@ show_docker_install_instructions() {
 check_mysql_redis() {
     local mysql_running=false
     local redis_running=false
+    local use_docker=false
 
-    # Check if MySQL container is running
-    if docker ps --format '{{.Names}}' | grep -q "^wegent-mysql$"; then
-        mysql_running=true
-    fi
-
-    # Check if Redis container is running
-    if docker ps --format '{{.Names}}' | grep -q "^wegent-redis$"; then
-        redis_running=true
-    fi
-
-    if [ "$mysql_running" = true ] && [ "$redis_running" = true ]; then
-        echo -e "${GREEN}✓ MySQL and Redis are already running${NC}"
-        return 0
-    fi
-
-    # Start MySQL and Redis if not running
-    echo -e "${YELLOW}MySQL or Redis is not running. Starting them with docker-compose...${NC}"
-    
-    if ! docker compose up -d mysql redis; then
-        echo -e "${RED}Error: Failed to start MySQL and Redis${NC}"
-        echo -e "${YELLOW}Please check docker-compose.yml and ensure Docker is running${NC}"
-        exit 1
-    fi
-
-    # Wait for services to be healthy
-    echo -e "${YELLOW}Waiting for MySQL and Redis to be ready...${NC}"
-    local max_wait=60
-    local waited=0
-    
-    while [ $waited -lt $max_wait ]; do
-        local mysql_healthy=false
-        local redis_healthy=false
-        
-        # Check MySQL health
-        if docker inspect wegent-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
-            mysql_healthy=true
+    # Check if Docker is available
+    if check_docker_installed; then
+        use_docker=true
+        # Check if MySQL container is running
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^wegent-mysql$"; then
+            mysql_running=true
         fi
-        
-        # Check Redis health
-        if docker inspect wegent-redis --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
-            redis_healthy=true
+
+        # Check if Redis container is running
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^wegent-redis$"; then
+            redis_running=true
         fi
-        
-        if [ "$mysql_healthy" = true ] && [ "$redis_healthy" = true ]; then
-            echo -e "${GREEN}✓ MySQL and Redis are ready${NC}"
+
+        if [ "$mysql_running" = true ] && [ "$redis_running" = true ]; then
+            echo -e "${GREEN}✓ MySQL and Redis containers are already running${NC}"
             return 0
         fi
+
+        # Try to start MySQL and Redis with docker-compose
+        echo -e "${YELLOW}MySQL or Redis containers are not running. Starting them with docker-compose...${NC}"
         
-        sleep 2
-        waited=$((waited + 2))
-        echo -e "  Waiting... (${waited}s/${max_wait}s)"
-    done
-    
-    echo -e "${RED}Error: MySQL or Redis failed to become healthy within ${max_wait}s${NC}"
-    echo -e "${YELLOW}You can check the logs with:${NC}"
-    echo -e "  ${BLUE}docker logs wegent-mysql${NC}"
-    echo -e "  ${BLUE}docker logs wegent-redis${NC}"
-    exit 1
+        if docker compose up -d mysql redis 2>/dev/null; then
+            # Wait for services to be healthy
+            echo -e "${YELLOW}Waiting for MySQL and Redis to be ready...${NC}"
+            local max_wait=60
+            local waited=0
+            
+            while [ $waited -lt $max_wait ]; do
+                local mysql_healthy=false
+                local redis_healthy=false
+                
+                # Check MySQL health
+                if docker inspect wegent-mysql --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+                    mysql_healthy=true
+                fi
+                
+                # Check Redis health
+                if docker inspect wegent-redis --format='{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then
+                    redis_healthy=true
+                fi
+                
+                if [ "$mysql_healthy" = true ] && [ "$redis_healthy" = true ]; then
+                    echo -e "${GREEN}✓ MySQL and Redis are ready${NC}"
+                    return 0
+                fi
+                
+                sleep 2
+                waited=$((waited + 2))
+                echo -e "  Waiting... (${waited}s/${max_wait}s)"
+            done
+            
+            echo -e "${RED}Error: MySQL or Redis failed to become healthy within ${max_wait}s${NC}"
+            echo -e "${YELLOW}Falling back to local services...${NC}"
+            use_docker=false
+        else
+            echo -e "${YELLOW}Docker Compose failed. Falling back to local services...${NC}"
+            use_docker=false
+        fi
+    fi
+
+    # Fallback to local services if Docker is not available or failed
+    if [ "$use_docker" = false ]; then
+        echo -e "${YELLOW}Using local MySQL and Redis services (Docker not available)${NC}"
+        
+        # Check local Redis
+        if command -v redis-cli &> /dev/null; then
+            if redis-cli ping >/dev/null 2>&1; then
+                redis_running=true
+                echo -e "${GREEN}✓ Local Redis is running${NC}"
+            else
+                echo -e "${YELLOW}Starting local Redis...${NC}"
+                # Try to start Redis in background
+                if command -v redis-server &> /dev/null; then
+                    redis-server --daemonize yes 2>/dev/null || true
+                    sleep 2
+                    if redis-cli ping >/dev/null 2>&1; then
+                        redis_running=true
+                        echo -e "${GREEN}✓ Local Redis started${NC}"
+                    else
+                        echo -e "${RED}✗ Failed to start local Redis${NC}"
+                        echo -e "${YELLOW}Please install and start Redis manually:${NC}"
+                        echo -e "  ${BLUE}brew install redis${NC}"
+                        echo -e "  ${BLUE}brew services start redis${NC}"
+                        exit 1
+                    fi
+                else
+                    echo -e "${RED}Error: redis-server not found${NC}"
+                    echo -e "${YELLOW}Please install Redis:${NC}"
+                    echo -e "  ${BLUE}brew install redis${NC}"
+                    echo -e "  ${BLUE}brew services start redis${NC}"
+                    exit 1
+                fi
+            fi
+        else
+            echo -e "${RED}Error: redis-cli not found${NC}"
+            echo -e "${YELLOW}Please install Redis:${NC}"
+            echo -e "  ${BLUE}brew install redis${NC}"
+            exit 1
+        fi
+
+        # Check local MySQL (try common installation paths)
+        local mysql_cmd=""
+        if command -v mysql &> /dev/null; then
+            mysql_cmd="mysql"
+        elif [ -f "/usr/local/mysql-9.5.0-macos15-arm64/bin/mysql" ]; then
+            mysql_cmd="/usr/local/mysql-9.5.0-macos15-arm64/bin/mysql"
+            export PATH="/usr/local/mysql-9.5.0-macos15-arm64/bin:$PATH"
+        elif [ -f "/usr/local/mysql/bin/mysql" ]; then
+            mysql_cmd="/usr/local/mysql/bin/mysql"
+            export PATH="/usr/local/mysql/bin:$PATH"
+        fi
+        
+        if [ -n "$mysql_cmd" ]; then
+            # Try to connect to MySQL
+            if $mysql_cmd -u root -e "SELECT 1" >/dev/null 2>&1 || \
+               $mysql_cmd -u task_user -ptask_password -e "SELECT 1" >/dev/null 2>&1; then
+                mysql_running=true
+                echo -e "${GREEN}✓ Local MySQL is running${NC}"
+                
+                # Check if database exists
+                if $mysql_cmd -u task_user -ptask_password -e "USE task_manager" >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓ Database 'task_manager' exists${NC}"
+                else
+                    echo -e "${YELLOW}Creating database 'task_manager'...${NC}"
+                    echo -e "${YELLOW}Note: If root password is required, you may need to run database setup manually${NC}"
+                    $mysql_cmd -u root -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null || \
+                    $mysql_cmd -u root -p123456 -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>/dev/null || true
+                    $mysql_cmd -u root -e "CREATE USER IF NOT EXISTS 'task_user'@'localhost' IDENTIFIED BY 'task_password';" 2>/dev/null || \
+                    $mysql_cmd -u root -p123456 -e "CREATE USER IF NOT EXISTS 'task_user'@'localhost' IDENTIFIED BY 'task_password';" 2>/dev/null || true
+                    $mysql_cmd -u root -e "GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';" 2>/dev/null || \
+                    $mysql_cmd -u root -p123456 -e "GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';" 2>/dev/null || true
+                    $mysql_cmd -u root -e "FLUSH PRIVILEGES;" 2>/dev/null || \
+                    $mysql_cmd -u root -p123456 -e "FLUSH PRIVILEGES;" 2>/dev/null || true
+                fi
+            else
+                echo -e "${YELLOW}Local MySQL is installed but root password is required${NC}"
+                echo -e "${YELLOW}Please create database and user manually:${NC}"
+                echo -e "  ${BLUE}$mysql_cmd -u root -p <<EOF${NC}"
+                echo -e "  ${BLUE}CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;${NC}"
+                echo -e "  ${BLUE}CREATE USER IF NOT EXISTS 'task_user'@'localhost' IDENTIFIED BY 'task_password';${NC}"
+                echo -e "  ${BLUE}GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';${NC}"
+                echo -e "  ${BLUE}FLUSH PRIVILEGES;${NC}"
+                echo -e "  ${BLUE}EOF${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Error: MySQL is not installed${NC}"
+            echo -e "${YELLOW}Please install MySQL or ensure it's in your PATH${NC}"
+            exit 1
+        fi
+
+        if [ "$mysql_running" = true ] && [ "$redis_running" = true ]; then
+            echo -e "${GREEN}✓ Local MySQL and Redis are ready${NC}"
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 # Check if Node.js and npm are installed
@@ -706,11 +818,12 @@ start_services() {
     local uv_version=$(uv --version 2>&1)
     echo -e "  ${GREEN}✓${NC} uv detected: $uv_version"
 
-    if ! check_docker_installed; then
-        show_docker_install_instructions
+    if check_docker_installed; then
+        local docker_version=$(docker --version 2>&1 | awk '{print $3}' | tr -d ',' || echo "unknown")
+        echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
+    else
+        echo -e "  ${YELLOW}⚠${NC} docker not available, will use local MySQL and Redis"
     fi
-    local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
-    echo -e "  ${GREEN}✓${NC} docker detected: $docker_version"
 
     # Check and start MySQL and Redis if needed
     check_mysql_redis

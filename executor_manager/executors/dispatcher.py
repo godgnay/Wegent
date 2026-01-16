@@ -53,10 +53,31 @@ class ExecutorDispatcher:
                     except (ImportError, AttributeError, ValueError) as e:
                         logger.error(f"Failed to load executor '{executor_type}' from '{executor_path}': {e}")
                         raise
+                    except RuntimeError as e:
+                        # Handle runtime errors (e.g., Docker not available) gracefully
+                        if "Docker" in str(e) or "docker" in str(e).lower():
+                            logger.warning(f"Executor '{executor_type}' cannot be loaded (likely Docker not available): {e}")
+                            logger.warning(f"Skipping '{executor_type}' executor. Some features may not be available.")
+                        else:
+                            logger.error(f"Failed to load executor '{executor_type}' from '{executor_path}': {e}")
+                            raise
+                    except Exception as e:
+                        logger.warning(f"Unexpected error loading executor '{executor_type}': {e}")
+                        logger.warning(f"Skipping '{executor_type}' executor. Some features may not be available.")
             else:
-                from .docker import DockerExecutor
-                executors["docker"] = DockerExecutor()
-                logger.info("Loaded default docker executor")
+                try:
+                    from .docker import DockerExecutor
+                    executors["docker"] = DockerExecutor()
+                    logger.info("Loaded default docker executor")
+                except RuntimeError as e:
+                    if "Docker" in str(e) or "docker" in str(e).lower():
+                        logger.warning(f"Default docker executor cannot be loaded (Docker not available): {e}")
+                        logger.warning("Executor Manager will start without Docker executor. Some features may not be available.")
+                    else:
+                        raise
+                except Exception as e:
+                    logger.warning(f"Unexpected error loading default docker executor: {e}")
+                    logger.warning("Executor Manager will start without Docker executor. Some features may not be available.")
                     
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON in EXECUTOR_CONFIG environment variable: {e}"
@@ -69,8 +90,10 @@ class ExecutorDispatcher:
         
         if not executors:
             error_msg = "No executors were loaded from configuration"
-            logger.error(error_msg)
-            raise RuntimeError(error_msg)
+            logger.warning(error_msg)
+            logger.warning("Executor Manager will start without any executors. Task execution features will not be available.")
+            # Don't raise error, allow the service to start without executors
+            # This allows the service to be used for other purposes even when Docker is not available
                 
         return executors
 
